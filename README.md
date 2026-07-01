@@ -57,6 +57,12 @@ committed catalog (`data/catalog.json`, `factions.json`, `favorites.json`). To r
   `~/azurlane/extract/out_all/Live2DOutput` and the render pipeline in `~/azurlane/wallpaper/`.
 - **`assets/emblems/`** is committed (sourced/curated, not script-generated).
 
+> **Note — the render pipeline lives outside this repo.** `apply.sh`/`prerender.sh` shell out to
+> `~/azurlane/wallpaper/render.js`, which is **not** version-controlled here. It carries a local patch
+> worth reapplying if you rebuild that dir: it must encode to a **temp file and atomically rename on
+> success** (not write directly to the cache path). Otherwise an interrupted render (kill/crash) leaves
+> a truncated `.mp4` at the cache path that `apply.sh` silently reuses forever.
+
 ## Dependencies
 
 - Runtime: a `wlr-layer-shell` compositor (COSMIC, Hyprland, sway) + `mpvpaper`.
@@ -67,6 +73,7 @@ committed catalog (`data/catalog.json`, `factions.json`, `favorites.json`). To r
 - The detail preview is a pre-rendered looping GIF, not a live in-app Cubism engine (intentional, see `docs/PLAN.md`); the true live render is the applied wallpaper.
 - 2 skins (`wuqi_3`/`wuqi_3_hx`, Azuma) don't render in the headless pipeline → shown with a placeholder.
 - 11 skins fall into **Other / Special** (paintings newer than the community data dump, or META/Siren/Universal).
+- On some multi-monitor Wayland compositors (seen on COSMIC/cosmic-comp), a wallpaper can occasionally flicker onto the *wrong* screen — a compositor `wlr-layer-shell` output-binding race, not a bad assignment. Click **⟳ Fix monitors** (bottom bar) or run `bash scripts/apply.sh --refresh` to recreate the surfaces and clear it.
 
 ## Faction emblems
 
