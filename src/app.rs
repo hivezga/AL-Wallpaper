@@ -433,6 +433,23 @@ impl eframe::App for AppState {
                         ui.label(egui::RichText::new(ship).size(12.0).color(hex("#cdd6df")));
                     }
                 }
+                // Re-apply the saved wallpapers to recreate their surfaces. On multi-monitor
+                // setups a wallpaper can occasionally show up on the wrong screen — a compositor
+                // quirk, not a bad assignment — and re-applying clears it.
+                if monitors.len() > 1 && !per_output.is_empty() {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.add_space(8.0);
+                        let btn = ui.add_enabled(!busy, egui::Button::new(egui::RichText::new("⟳ Fix monitors").size(12.0)));
+                        if btn.on_hover_text(
+                            "Wrong wallpaper on a monitor? On some multi-monitor Wayland setups a\n\
+                             wallpaper can flicker onto the wrong screen — a known compositor quirk,\n\
+                             not your assignment. Click to re-apply and clear it.",
+                        ).clicked() {
+                            applier.refresh(&root);
+                            *status = "re-applying wallpapers…".into();
+                        }
+                    });
+                }
             });
         });
 
@@ -617,6 +634,13 @@ impl eframe::App for AppState {
                     ui.add_space(6.0);
                     ui.label(egui::RichText::new("First use of a skin renders once per resolution & fit, then it's cached. Change the fit above, then re-apply to update a live monitor.").size(11.0).color(hex("#6f8090")));
                 });
+                if monitors.len() > 1 {
+                    ui.add_space(4.0);
+                    ui.horizontal(|ui| {
+                        ui.add_space(6.0);
+                        ui.label(egui::RichText::new("Multi-monitor note: a wallpaper occasionally showing on the wrong screen is a known Wayland compositor quirk, not a bad assignment. Use \u{27f3} Fix monitors (bottom bar) to re-apply and clear it.").size(11.0).color(hex("#6f8090")));
+                    });
+                }
                 ui.add_space(6.0);
                 ui.horizontal(|ui| { ui.add_space(6.0); if ui.button("Close").clicked() { *selected = None; } });
                 ui.add_space(8.0);

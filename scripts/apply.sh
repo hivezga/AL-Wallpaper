@@ -5,6 +5,9 @@
 #   apply.sh <skin> --fit <MODE>     force fit MODE (fit|stretch|crop) for the applied output(s)
 #   apply.sh --stop                  remove the wallpaper (all)
 #   apply.sh --outputs               print detected "NAME WxH" lines
+#   apply.sh --refresh               re-apply each monitor's saved skin (recreates the
+#                                    wallpaper surfaces to clear a compositor cross-monitor
+#                                    bleed; does not change assignments)
 # Without --fit, each output uses its saved per-monitor fit (state.js fit <NAME>; default "fit").
 # Emits a line protocol on stdout for the GUI:
 #   OUTPUTS <n> | TARGET <name> <w> <h> <i> <n> | CACHED <name> | RENDER <name> <w> <h>
@@ -43,13 +46,16 @@ kill_output(){
   [ -n "$p" ] && kill -9 $p 2>/dev/null
 }
 
+MODE="apply"
 case "${1:-}" in
   --stop)    pkill -x mpvpaper 2>/dev/null && echo "stopped" || echo "nothing running"; exit 0;;
   --outputs) detect_outputs; exit 0;;
-  "")        echo "usage: apply.sh <skin> [--output NAME] | --stop | --outputs"; exit 1;;
+  --refresh) MODE="refresh"; shift || true;;
+  "")        echo "usage: apply.sh <skin> [--output NAME] | --stop | --outputs | --refresh"; exit 1;;
 esac
 
-SKIN="$1"; shift || true
+SKIN=""
+[ "$MODE" = "apply" ] && { SKIN="$1"; shift || true; }
 ONLY=""; FIT_ARG=""
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -58,7 +64,6 @@ while [ $# -gt 0 ]; do
     *)        shift;;
   esac
 done
-[ -d "$MODELS/$SKIN" ] || { echo "ERR no such skin: $SKIN"; exit 1; }
 
 # resolve an output's fit mode: explicit --fit wins, else the saved per-monitor setting.
 fit_for(){ if [ -n "$FIT_ARG" ]; then echo "$FIT_ARG"; else node "$HERE/state.js" fit "$1" 2>/dev/null || echo fit; fi; }
@@ -75,7 +80,48 @@ MPV_FLAGS=(); MPV_OPTS="no-audio loop-file=inf hwdec=auto-safe --really-quiet"
 case "$PWR_MODE" in pause) MPV_FLAGS+=(-p);; stop) MPV_FLAGS+=(-s);; esac
 [ "${PWR_FPS:-0}" -gt 0 ] 2>/dev/null && MPV_OPTS="$MPV_OPTS --vf=fps=$PWR_FPS"
 
-# build the work list (all, or just the one requested)
+# render (if needed) and (re)launch one output's wallpaper. args: NAME W H SKIN idx total
+apply_one(){
+  local NAME="$1" W="$2" H="$3" SK="$4" IDX="$5" TOT="$6" FIT MP4
+  FIT="$(fit_for "$NAME")"; [ -n "$FIT" ] || FIT="fit"
+  MP4="$(mp4_for "$SK" "$W" "$H" "$FIT")"
+  echo "TARGET $NAME $W $H $IDX $TOT"
+  if [ -f "$MP4" ]; then
+    echo "CACHED $NAME"
+  else
+    [ -d "$MODELS/$SK" ] || { echo "ERR no such skin: $SK"; return 1; }
+    echo "RENDER $NAME $W $H"
+    ( cd "$RENDER_DIR" && node render.js "$MODELS/$SK" "$MP4" --w "$W" --h "$H" --fit "$FIT" ) 2>/dev/null
+    [ -f "$MP4" ] || { echo "ERR render failed for $NAME"; return 1; }
+  fi
+  # replace just this output's wallpaper once its video is ready (others stay up)
+  kill_output "$NAME"
+  setsid -f mpvpaper ${MPV_FLAGS[@]+"${MPV_FLAGS[@]}"} -o "$MPV_OPTS" "$NAME" "$MP4" >/dev/null 2>&1
+  echo "APPLIED $NAME $SK"
+  node "$HERE/state.js" set-output "$NAME" "$SK"
+}
+
+if [ "$MODE" = "refresh" ]; then
+  # re-apply each output's currently saved skin — recreates the wallpaper surfaces to clear
+  # a compositor cross-monitor bleed (a wlr-layer-shell output-binding race) without changing
+  # assignments. Uses the cached render, so it's fast.
+  declare -A SAVED=()
+  while read -r n s; do [ -n "$n" ] && SAVED["$n"]="$s"; done < <(node "$HERE/state.js" outputs 2>/dev/null)
+  WORK=()
+  for e in "${ALL[@]}"; do n="${e%% *}"; [ -n "${SAVED[$n]:-}" ] && WORK+=("$e"); done
+  [ "${#WORK[@]}" -eq 0 ] && { echo "ERR no saved assignments to refresh"; exit 1; }
+  echo "OUTPUTS ${#WORK[@]}"
+  i=0
+  for entry in "${WORK[@]}"; do
+    i=$((i+1)); NAME="${entry%% *}"; RES="${entry##* }"; W="${RES%x*}"; H="${RES#*x}"
+    apply_one "$NAME" "$W" "$H" "${SAVED[$NAME]}" "$i" "${#WORK[@]}"
+  done
+  echo "DONE refresh ${#WORK[@]}"
+  exit 0
+fi
+
+# ---- normal apply: one skin to all outputs (or just the one requested) ----
+[ -d "$MODELS/$SKIN" ] || { echo "ERR no such skin: $SKIN"; exit 1; }
 WORK=()
 for e in "${ALL[@]}"; do
   [ -z "$ONLY" ] || [ "${e%% *}" = "$ONLY" ] && WORK+=("$e")
@@ -89,20 +135,6 @@ i=0
 for entry in "${WORK[@]}"; do
   i=$((i+1))
   NAME="${entry%% *}"; RES="${entry##* }"; W="${RES%x*}"; H="${RES#*x}"
-  FIT="$(fit_for "$NAME")"; [ -n "$FIT" ] || FIT="fit"
-  MP4="$(mp4_for "$SKIN" "$W" "$H" "$FIT")"
-  echo "TARGET $NAME $W $H $i ${#WORK[@]}"
-  if [ -f "$MP4" ]; then
-    echo "CACHED $NAME"
-  else
-    echo "RENDER $NAME $W $H"
-    ( cd "$RENDER_DIR" && node render.js "$MODELS/$SKIN" "$MP4" --w "$W" --h "$H" --fit "$FIT" ) 2>/dev/null
-    [ -f "$MP4" ] || { echo "ERR render failed for $NAME"; continue; }
-  fi
-  # replace just this output's wallpaper once its video is ready (others stay up)
-  kill_output "$NAME"
-  setsid -f mpvpaper ${MPV_FLAGS[@]+"${MPV_FLAGS[@]}"} -o "$MPV_OPTS" "$NAME" "$MP4" >/dev/null 2>&1
-  echo "APPLIED $NAME $SKIN"
-  node "$HERE/state.js" set-output "$NAME" "$SKIN"
+  apply_one "$NAME" "$W" "$H" "$SKIN" "$i" "${#WORK[@]}"
 done
 echo "DONE $SKIN ${#WORK[@]}"

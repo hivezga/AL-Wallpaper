@@ -28,6 +28,21 @@ impl Applier {
 
     /// Apply `skin` to all monitors (output=None) or one monitor (Some(name)).
     pub fn apply(&mut self, root: &Path, skin: &str, output: Option<&str>) {
+        let mut args = vec![skin.to_string()];
+        if let Some(o) = output {
+            args.push("--output".to_string());
+            args.push(o.to_string());
+        }
+        self.run(root, args);
+    }
+
+    /// Re-apply each monitor's saved skin (recreates the wallpaper surfaces to clear a
+    /// compositor cross-monitor bleed). Does not change assignments; uses cached renders.
+    pub fn refresh(&mut self, root: &Path) {
+        self.run(root, vec!["--refresh".to_string()]);
+    }
+
+    fn run(&mut self, root: &Path, args: Vec<String>) {
         if self.running {
             return;
         }
@@ -35,14 +50,9 @@ impl Applier {
         self.rx = Some(rx);
         self.running = true;
         let script = root.join("scripts/apply.sh");
-        let skin = skin.to_string();
-        let output = output.map(|s| s.to_string());
         thread::spawn(move || {
             let mut cmd = Command::new("bash");
-            cmd.arg(&script).arg(&skin);
-            if let Some(o) = &output {
-                cmd.arg("--output").arg(o);
-            }
+            cmd.arg(&script).args(&args);
             cmd.stdout(Stdio::piped()).stderr(Stdio::null());
             match cmd.spawn() {
                 Ok(mut child) => {
