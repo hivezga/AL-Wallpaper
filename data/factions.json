@@ -1,0 +1,29 @@
+{
+  "_note": "Palettes are emblem/identity-derived (AL publishes no official brand hex). order drives Level-1 grid.",
+  "factions": [
+    { "key": "eagle_union",        "name": "Eagle Union",        "short": "USS",  "order": 1,
+      "palette": { "bg": "#0c1426", "panel": "#15243f", "accent": "#e8b23a", "accent2": "#c8d4e6", "text": "#eef3f8", "muted": "#93a6bd" } },
+    { "key": "royal_navy",         "name": "Royal Navy",         "short": "HMS",  "order": 2,
+      "palette": { "bg": "#08122e", "panel": "#112152", "accent": "#e7c558", "accent2": "#aebfe6", "text": "#eef1fb", "muted": "#93a0c4" } },
+    { "key": "sakura_empire",      "name": "Sakura Empire",      "short": "IJN",  "order": 3,
+      "palette": { "bg": "#260b14", "panel": "#43141f", "accent": "#ef7d9d", "accent2": "#ffd6e0", "text": "#fdecf1", "muted": "#cd94a3" } },
+    { "key": "iron_blood",         "name": "Iron Blood",         "short": "KMS",  "order": 4,
+      "palette": { "bg": "#0f1012", "panel": "#1b1d20", "accent": "#c0392b", "accent2": "#aeb3b8", "text": "#eceff1", "muted": "#939aa1" } },
+    { "key": "dragon_empery",      "name": "Dragon Empery",      "short": "PRAN", "order": 5,
+      "palette": { "bg": "#0e2019", "panel": "#163026", "accent": "#e0b53a", "accent2": "#6fd49b", "text": "#e9f5ef", "muted": "#84b8a0" } },
+    { "key": "sardegna_empire",    "name": "Sardegna Empire",    "short": "RN",   "order": 6,
+      "palette": { "bg": "#0c1d22", "panel": "#133038", "accent": "#2ec4b6", "accent2": "#e6c86a", "text": "#e8f5f6", "muted": "#86b2b7" } },
+    { "key": "northern_parliament","name": "Northern Parliament","short": "SN",   "order": 7,
+      "palette": { "bg": "#1a0d0f", "panel": "#2c1417", "accent": "#d23b3b", "accent2": "#e6d28a", "text": "#f3ece9", "muted": "#bd9a98" } },
+    { "key": "iris_libre",         "name": "Iris Libre",         "short": "FFNF", "order": 8,
+      "palette": { "bg": "#0a1230", "panel": "#131f4a", "accent": "#e3c34a", "accent2": "#92acff", "text": "#eef1fb", "muted": "#94a2c8" } },
+    { "key": "vichya_dominion",    "name": "Vichya Dominion",    "short": "MNF",  "order": 9,
+      "palette": { "bg": "#160e2c", "panel": "#241844", "accent": "#a988e6", "accent2": "#e6c84a", "text": "#f0eafa", "muted": "#ad9cc6" } },
+    { "key": "tulipa",             "name": "Kingdom of Tulipa",  "short": "HNLMS","order": 10,
+      "palette": { "bg": "#2a1608", "panel": "#43230d", "accent": "#ef8a3a", "accent2": "#ffd9a8", "text": "#fbeede", "muted": "#c6a589" } },
+    { "key": "collab",             "name": "Collaboration",      "short": "★",    "order": 11,
+      "palette": { "bg": "#1a1224", "panel": "#281a38", "accent": "#c77dff", "accent2": "#ffd86b", "text": "#f1eaf7", "muted": "#b09ec0" } },
+    { "key": "other",              "name": "Other / Special",    "short": "—",    "order": 99,
+      "palette": { "bg": "#15161a", "panel": "#212329", "accent": "#8aa0b4", "accent2": "#cdd3da", "text": "#eceef2", "muted": "#9aa0a8" } }
+  ]
+}

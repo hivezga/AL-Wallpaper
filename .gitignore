@@ -1,0 +1,19 @@
+# Rust build output
+/target/
+
+# Generated assets — rebuild with the scripts in scripts/ (kept out of VCS; ~240MB+)
+#   thumbs/       ← thumb.js
+#   preview/      ← preview.js
+#   preview_anim/ ← preview_anim.js
+# (assets/emblems/ is sourced/curated, NOT generated — keep it tracked)
+/assets/thumbs/
+/assets/preview/
+/assets/preview_anim/
+
+# Generated logs
+/data/*.log
+
+# Re-downloadable community data + reference dumps (rebuild catalog.json with
+# scripts/build_catalog.js). Kept local, out of VCS to keep the repo lean.
+/data/raw/
+/data/sources/
