@@ -43,6 +43,20 @@ Regenerate the catalog after a game data update:
 TODAY=$(date +%F) node scripts/build_catalog.js
 ```
 
+### Rebuilding `data/` from a fresh clone
+
+The bulky, regenerable inputs are **gitignored**, so a fresh checkout ships only the small
+committed catalog (`data/catalog.json`, `factions.json`, `favorites.json`). To rebuild the rest:
+
+- **`data/sources/`, `data/raw/`** — the community JSON dumps that feed `build_catalog.js`
+  (re-download from [AzurLaneTools/AzurLaneData](https://github.com/AzurLaneTools/AzurLaneData) EN),
+  needed only if you want to regenerate `catalog.json`. The committed `catalog.json` already runs the app without them.
+- **`assets/thumbs/`, `assets/preview/`, `assets/preview_anim/`** — generated; batch with
+  `node scripts/thumb.js`, `node scripts/preview.js --all`, `node scripts/preview_anim.js --all`
+  (or let the GUI make `preview*` lazily on first view). These need the extracted Live2D models in
+  `~/azurlane/extract/out_all/Live2DOutput` and the render pipeline in `~/azurlane/wallpaper/`.
+- **`assets/emblems/`** is committed (sourced/curated, not script-generated).
+
 ## Dependencies
 
 - Runtime: a `wlr-layer-shell` compositor (COSMIC, Hyprland, sway) + `mpvpaper`.
