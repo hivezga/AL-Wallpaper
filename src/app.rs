@@ -1,8 +1,11 @@
 use crate::apply::{ApplyEvent, Applier};
 use crate::model::{hex, load_favorites, load_state, save_favorites, scale, Data, Fit, Monitor, PowerCfg, RotationCfg};
-use crate::theme::{faction_visuals, neutral_visuals};
+use crate::theme::{
+    col, faction_visuals, install_fonts, mono, neutral_visuals, oswald, oswald_b, plex, plex_it,
+    stencil,
+};
 use eframe::egui::{
-    self, Align2, Color32, ColorImage, Context, FontId, Pos2, Rect, Rounding, Sense, Stroke,
+    self, Align2, Color32, ColorImage, Context, FontId, Pos2, Rect, Rounding, Sense, Shape, Stroke,
     TextureHandle, TextureOptions, Vec2,
 };
 use std::collections::{HashMap, HashSet};
@@ -141,6 +144,9 @@ pub struct AppState {
     // animated previews (decoded gif frames, lazily loaded)
     anim: HashMap<String, Anim>,
     anim_jobs: HashSet<String>,
+    // headless capture (AL_SHOT=out.png): render a few frames, grab the framebuffer, exit
+    shot_path: Option<PathBuf>,
+    frame: u64,
 }
 
 fn root_dir() -> PathBuf {
@@ -205,8 +211,19 @@ impl AppState {
         let data = Data::load(root.clone()).expect("failed to load catalog/factions");
         let cfg_dir = config_dir();
         let st = load_state(&cfg_dir);
+        install_fonts(&cc.egui_ctx);
         let mut style = (*cc.egui_ctx.style()).clone();
         style.spacing.item_spacing = Vec2::new(10.0, 10.0);
+        style.spacing.button_padding = Vec2::new(10.0, 5.0);
+        use egui::TextStyle as T;
+        style.text_styles = [
+            (T::Heading, oswald_b(22.0)),
+            (T::Body, plex(14.5)),
+            (T::Button, plex(13.5)),
+            (T::Monospace, mono(12.5)),
+            (T::Small, plex(11.0)),
+        ]
+        .into();
         cc.egui_ctx.set_style(style);
 
         let start = std::env::var("AL_START_FACTION").ok().filter(|k| data.faction(k).is_some() && data.count(k) > 0);
@@ -259,12 +276,51 @@ impl AppState {
             show_power,
             anim: HashMap::new(),
             anim_jobs: HashSet::new(),
+            shot_path: std::env::var("AL_SHOT").ok().filter(|s| !s.is_empty()).map(PathBuf::from),
+            frame: 0,
         }
     }
 }
 
 impl eframe::App for AppState {
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
+        // headless capture harness: drive frames, grab the framebuffer, save, quit
+        if self.shot_path.is_some() {
+            self.frame += 1;
+            if self.frame == 1 {
+                eprintln!("[shot] first frame; will capture at frame 40");
+            }
+            // timer-based wake advances frames even when the window is on a hidden
+            // workspace (compositor frame callbacks are throttled there).
+            ctx.request_repaint_after(std::time::Duration::from_millis(16));
+            if self.frame == 40 {
+                eprintln!("[shot] frame {} — requesting screenshot", self.frame);
+                ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot);
+            }
+            let grabbed = ctx.input(|i| {
+                i.events.iter().find_map(|e| match e {
+                    egui::Event::Screenshot { image, .. } => Some(image.clone()),
+                    _ => None,
+                })
+            });
+            if let (Some(img), Some(path)) = (grabbed, self.shot_path.clone()) {
+                let (w, h) = (img.size[0] as u32, img.size[1] as u32);
+                let mut buf = Vec::with_capacity((w * h * 4) as usize);
+                for px in &img.pixels {
+                    buf.extend_from_slice(&px.to_array());
+                }
+                match image::RgbaImage::from_raw(w, h, buf).map(|im| im.save(&path)) {
+                    Some(Ok(())) => eprintln!("[shot] saved {}x{} -> {}", w, h, path.display()),
+                    other => eprintln!("[shot] save failed: {:?}", other),
+                }
+                std::process::exit(0);
+            }
+            // failsafe so a foreground run always terminates
+            if self.frame > 240 {
+                eprintln!("[shot] failsafe exit — no framebuffer after 240 frames");
+                std::process::exit(2);
+            }
+        }
         // optional launch-time apply (AL_AUTOAPPLY=<skin>)
         if let Some(sk) = self.pending.take() {
             let root = self.data.root.clone();
@@ -386,31 +442,46 @@ impl eframe::App for AppState {
         }
 
         // ---- header ----
-        egui::TopBottomPanel::top("header").exact_height(64.0).show(ctx, |ui| {
-            ui.add_space(6.0);
+        let head_accent = match &*screen {
+            Screen::Factions => col::NEUTRAL_ACCENT,
+            Screen::Gallery(key) => data.faction(key).map(|f| hex(&f.palette.accent)).unwrap_or(col::NEUTRAL_ACCENT),
+        };
+        egui::TopBottomPanel::top("header").exact_height(80.0).show(ctx, |ui| {
+            // accent waterline pinned to the bottom of the header
+            let hr = ui.max_rect();
+            ui.painter().line_segment([hr.left_bottom(), hr.right_bottom()], Stroke::new(2.0, head_accent));
+            ui.add_space(12.0);
             ui.horizontal(|ui| {
-                ui.add_space(8.0);
+                ui.add_space(12.0);
                 match &*screen {
                     Screen::Factions => {
-                        ui.heading("Azur Lane");
-                        ui.label(egui::RichText::new("Live2D Wallpaper").size(15.0).color(hex("#8aa0b4")));
+                        ui.vertical(|ui| {
+                            ui.spacing_mut().item_spacing.y = 2.0;
+                            ui.label(egui::RichText::new("AZUR LANE").font(oswald_b(28.0)).color(col::CHALK));
+                            ui.label(egui::RichText::new(track("Fleet Registry")).font(mono(11.0)).color(col::HAZE));
+                        });
                     }
                     Screen::Gallery(key) => {
-                        if ui.button("◂ Factions").clicked() { goto = Some(Screen::Factions); }
-                        ui.add_space(8.0);
+                        if ui.button("◂ FLEETS").clicked() { goto = Some(Screen::Factions); }
+                        ui.add_space(10.0);
                         if let Some(f) = data.faction(key) {
-                            ui.heading(&f.name);
-                            ui.label(egui::RichText::new(format!("{} skins", data.count(key))).color(hex(&f.palette.muted)));
+                            pennant_chip(ui, &f.short, head_accent, 15.0);
+                            ui.add_space(6.0);
+                            ui.vertical(|ui| {
+                                ui.spacing_mut().item_spacing.y = 2.0;
+                                ui.label(egui::RichText::new(f.name.to_uppercase()).font(oswald_b(26.0)).color(col::CHALK));
+                                ui.label(egui::RichText::new(track(&format!("{} ships on register", data.count(key)))).font(mono(10.5)).color(col::HAZE));
+                            });
                         }
                     }
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.add_space(8.0);
-                    if ui.button("⟳ Auto-rotate").clicked() { *show_rotation = !*show_rotation; }
-                    if ui.button("⏻ Power").on_hover_text("Pause the wallpaper when hidden; cap fps").clicked() { *show_power = !*show_power; }
+                    ui.add_space(12.0);
+                    if ui.button("⟳ ROTATION").clicked() { *show_rotation = !*show_rotation; }
+                    if ui.button("⚡ POWER").on_hover_text("Pause the wallpaper when hidden; cap fps").clicked() { *show_power = !*show_power; }
                     *search_focused = false;
                     if let Screen::Gallery(_) = &*screen {
-                        let te = ui.add(egui::TextEdit::singleline(search).hint_text("search ship / skin   (/)").desired_width(180.0));
+                        let te = ui.add(egui::TextEdit::singleline(search).hint_text("search register  (/)").desired_width(180.0));
                         if *focus_search { te.request_focus(); *focus_search = false; }
                         *search_focused = te.has_focus();
                     }
@@ -419,18 +490,18 @@ impl eframe::App for AppState {
         });
 
         // ---- status bar: per-monitor assignment ----
-        egui::TopBottomPanel::bottom("status").exact_height(28.0).show(ctx, |ui| {
+        egui::TopBottomPanel::bottom("status").exact_height(30.0).show(ctx, |ui| {
             ui.horizontal(|ui| {
-                ui.add_space(8.0);
+                ui.add_space(10.0);
                 if busy { ui.spinner(); }
                 if monitors.is_empty() {
-                    ui.label(egui::RichText::new(&*status).size(12.5).color(hex("#9fb0c0")));
+                    ui.label(egui::RichText::new(&*status).font(mono(11.5)).color(col::HAZE));
                 } else {
                     for (i, m) in monitors.iter().enumerate() {
-                        if i > 0 { ui.label(egui::RichText::new("·").color(hex("#44505c"))); }
+                        if i > 0 { ui.label(egui::RichText::new("│").font(mono(11.0)).color(col::RIVET)); }
                         let ship = per_output.get(&m.name).map(|c| data.ship_of(c)).unwrap_or_else(|| "—".into());
-                        ui.label(egui::RichText::new(format!("{} ▸ ", m.name)).size(12.0).color(hex("#6f8090")));
-                        ui.label(egui::RichText::new(ship).size(12.0).color(hex("#cdd6df")));
+                        ui.label(egui::RichText::new(format!("{} ▸", m.name)).font(mono(11.0)).color(col::HAZE_DIM));
+                        ui.label(egui::RichText::new(ship).font(mono(11.0)).color(col::CHALK));
                     }
                 }
                 // Re-apply the saved wallpapers to recreate their surfaces. On multi-monitor
@@ -439,7 +510,7 @@ impl eframe::App for AppState {
                 if monitors.len() > 1 && !per_output.is_empty() {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.add_space(8.0);
-                        let btn = ui.add_enabled(!busy, egui::Button::new(egui::RichText::new("⟳ Fix monitors").size(12.0)));
+                        let btn = ui.add_enabled(!busy, egui::Button::new(egui::RichText::new("⟳ FIX SCREENS").font(mono(11.0))));
                         if btn.on_hover_text(
                             "Wrong wallpaper on a monitor? On some multi-monitor Wayland setups a\n\
                              wallpaper can flicker onto the wrong screen — a known compositor quirk,\n\
@@ -453,27 +524,42 @@ impl eframe::App for AppState {
             });
         });
 
-        // ---- detail side panel ----
+        // ---- ship dossier side panel ----
         if let Some(idx) = *selected {
             let skin = data.skins[idx].clone();
             let fac = data.faction(&skin.faction).cloned();
-            egui::SidePanel::right("detail").resizable(false).exact_width(326.0).show(ctx, |ui| {
+            let accent = fac.as_ref().map(|f| hex(&f.palette.accent)).unwrap_or(col::NEUTRAL_ACCENT);
+            egui::SidePanel::right("detail").resizable(false).exact_width(338.0).show(ctx, |ui| {
+              // accent seam down the panel's left edge
+              let pr = ui.max_rect();
+              ui.painter().line_segment([pr.left_top(), pr.left_bottom()], Stroke::new(2.0, accent));
               egui::ScrollArea::vertical().show(ui, |ui| {
-                ui.add_space(10.0);
+                ui.add_space(12.0);
+                ui.horizontal(|ui| { ui.add_space(8.0); ui.label(egui::RichText::new(track("Ship dossier")).font(mono(10.5)).color(col::HAZE)); });
+                ui.add_space(2.0);
                 ui.horizontal(|ui| {
-                    ui.add_space(6.0);
-                    ui.heading(&skin.ship);
-                    if skin.is_oath { ui.label(egui::RichText::new("⚭").size(18.0).color(hex("#e7c558"))); }
+                    ui.add_space(8.0);
+                    ui.label(egui::RichText::new(skin.ship.to_uppercase()).font(oswald_b(26.0)).color(col::CHALK));
+                    if skin.is_oath {
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.add_space(8.0);
+                            ui.label(egui::RichText::new("⚭").size(18.0).color(col::GOLD)).on_hover_text("Oath skin");
+                        });
+                    }
                 });
-                if let Some(sn) = &skin.skin_name {
-                    ui.horizontal(|ui| { ui.add_space(6.0); ui.label(egui::RichText::new(sn).italics().color(hex("#9fb0c0"))); });
-                }
-                ui.add_space(6.0);
                 ui.horizontal(|ui| {
-                    ui.add_space(6.0);
+                    ui.add_space(8.0);
+                    if let Some(f) = &fac { pennant_chip(ui, &f.short, accent, 12.0); ui.add_space(4.0); }
+                    if let Some(sn) = &skin.skin_name {
+                        ui.label(egui::RichText::new(sn).font(plex_it(13.0)).color(col::HAZE));
+                    }
+                });
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    ui.add_space(8.0);
                     let fav = favorites.contains(&skin.codename);
-                    let (txt, col) = if fav { ("★ Favorited", hex("#e7c558")) } else { ("☆ Add to favorites", hex("#8aa0b4")) };
-                    if ui.button(egui::RichText::new(txt).color(col)).clicked() {
+                    let (txt, fc) = if fav { ("★ FAVORITED", col::GOLD) } else { ("☆ ADD TO FAVORITES", col::HAZE) };
+                    if ui.button(egui::RichText::new(txt).color(fc)).clicked() {
                         if fav {
                             favorites.remove(&skin.codename);
                         } else {
@@ -485,7 +571,7 @@ impl eframe::App for AppState {
                         save_favorites(&root, favorites);
                     }
                 });
-                ui.add_space(8.0);
+                ui.add_space(10.0);
                 // ---- on-screen preview for the selected monitor + fit mode ----
                 let n_mon = monitors.len();
                 if *preview_monitor >= n_mon { *preview_monitor = 0; }
@@ -498,10 +584,10 @@ impl eframe::App for AppState {
 
                 if n_mon > 1 {
                     ui.horizontal(|ui| {
-                        ui.add_space(6.0);
-                        ui.label(egui::RichText::new("monitor").size(11.0).color(hex("#6f8090")));
-                        let sel = mon.as_ref().map(|m| format!("{} ({}×{})", m.name, m.w, m.h)).unwrap_or_default();
-                        egui::ComboBox::from_id_source("prev_mon").selected_text(sel).width(228.0).show_ui(ui, |ui| {
+                        ui.add_space(8.0);
+                        ui.label(egui::RichText::new(track("screen")).font(mono(10.5)).color(col::HAZE_DIM));
+                        let sel = mon.as_ref().map(|m| format!("{} · {}×{}", m.name, m.w, m.h)).unwrap_or_default();
+                        egui::ComboBox::from_id_source("prev_mon").selected_text(sel).width(224.0).show_ui(ui, |ui| {
                             for (i, m) in monitors.iter().enumerate() {
                                 if ui.selectable_label(*preview_monitor == i, format!("{} ({}×{})", m.name, m.w, m.h)).clicked() {
                                     *preview_monitor = i;
@@ -512,7 +598,7 @@ impl eframe::App for AppState {
                     ui.add_space(4.0);
                 }
 
-                let avail = ui.available_width() - 12.0;
+                let avail = ui.available_width() - 16.0;
                 let ph = (avail / aspect).clamp(80.0, 240.0);
                 // accurate preview uses a native-aspect render of the painting; fall back to the
                 // 3:4 gallery thumbnail and generate the real one in the background on first view.
@@ -549,36 +635,35 @@ impl eframe::App for AppState {
                 let content = anim_tex.clone().or_else(|| prev.clone()).or_else(|| load_tex(textures, ctx, &root, &skin.thumb));
                 let content_aspect = content.as_ref().map(|t| { let s = t.size(); s[0] as f32 / s[1].max(1) as f32 }).unwrap_or(0.75);
                 ui.horizontal(|ui| {
-                    ui.add_space(6.0);
+                    ui.add_space(8.0);
                     let (rect, _) = ui.allocate_exact_size(Vec2::new(avail, ph), Sense::hover());
                     let emblem = if content.is_none() {
                         fac.as_ref().and_then(|f| load_tex(textures, ctx, &root, &format!("assets/emblems/{}.png", f.key)))
                     } else { None };
-                    let tint = fac.as_ref().map(|f| hex(&f.palette.accent)).unwrap_or(Color32::GRAY);
-                    monitor_preview(ui.painter(), rect, aspect, cur_fit, content.as_ref(), emblem.as_ref(), tint, content_aspect);
+                    monitor_preview(ui.painter(), rect, aspect, cur_fit, content.as_ref(), emblem.as_ref(), accent, content_aspect);
                 });
                 let note = if anim_tex.is_some() {
-                    Some(("▶ animated preview", hex("#7fae6f")))
+                    Some(("▶ ANIMATED PREVIEW", col::SIGNAL))
                 } else if prev.is_none() {
-                    Some(("generating preview…", hex("#6f8090")))
+                    Some(("GENERATING PREVIEW…", col::HAZE))
                 } else {
-                    Some(("rendering animated preview…", hex("#6f8090")))
+                    Some(("RENDERING ANIMATED PREVIEW…", col::HAZE))
                 };
-                if let Some((txt, col)) = note {
+                if let Some((txt, c)) = note {
                     ui.horizontal(|ui| {
-                        ui.add_space(6.0);
-                        ui.label(egui::RichText::new(txt).size(10.0).italics().color(col));
+                        ui.add_space(8.0);
+                        ui.label(egui::RichText::new(track(txt)).font(mono(9.5)).color(c));
                     });
                 }
 
-                ui.add_space(8.0);
+                ui.add_space(10.0);
                 ui.horizontal(|ui| {
-                    ui.add_space(6.0);
-                    ui.label(egui::RichText::new("FIT ON SCREEN").size(11.0).strong().color(hex("#8aa0b4")));
+                    ui.add_space(8.0);
+                    ui.label(egui::RichText::new(track("Fit on screen")).font(mono(10.5)).color(col::HAZE));
                 });
-                ui.add_space(2.0);
+                ui.add_space(4.0);
                 ui.horizontal(|ui| {
-                    ui.add_space(6.0);
+                    ui.add_space(8.0);
                     for f in Fit::ALL {
                         if ui.add_enabled(mon.is_some(), egui::SelectableLabel::new(f == cur_fit, f.label())).clicked() {
                             if let Some(m) = &mon {
@@ -588,62 +673,69 @@ impl eframe::App for AppState {
                         }
                     }
                 });
-                ui.add_space(2.0);
+                ui.add_space(3.0);
                 ui.horizontal(|ui| {
-                    ui.add_space(6.0);
+                    ui.add_space(8.0);
                     let hint = match cur_fit {
                         Fit::Fit => "Whole character; gradient fills the sides.",
                         Fit::Stretch => "Stretched to fill — may distort.",
                         Fit::Crop => "Zoomed to fill the screen — edges cropped.",
                     };
-                    ui.label(egui::RichText::new(hint).size(10.5).italics().color(hex("#6f8090")));
+                    ui.label(egui::RichText::new(hint).font(plex_it(11.0)).color(col::HAZE_DIM));
                 });
+                ui.add_space(12.0);
+                // ---- data rows ----
+                let mut row = |ui: &mut egui::Ui, k: &str, v: egui::RichText| {
+                    ui.horizontal(|ui| {
+                        ui.add_space(8.0);
+                        ui.label(egui::RichText::new(track(k)).font(mono(10.5)).color(col::HAZE_DIM));
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| { ui.add_space(2.0); ui.label(v); });
+                    });
+                };
+                if let Some(f) = &fac { row(ui, "fleet", egui::RichText::new(f.name.to_uppercase()).font(oswald(14.0)).color(accent)); }
+                row(ui, "codename", egui::RichText::new(&skin.codename).font(mono(11.5)).color(col::CHALK));
+                if let Some(m) = &mon { row(ui, "target", egui::RichText::new(format!("{}×{}", m.w, m.h)).font(mono(11.5)).color(col::CHALK)); }
+
+                ui.add_space(12.0);
+                let seam = ui.max_rect();
+                ui.painter().line_segment([Pos2::new(seam.left() + 8.0, ui.cursor().top()), Pos2::new(seam.right() - 8.0, ui.cursor().top())], Stroke::new(1.0, col::RIVET));
                 ui.add_space(10.0);
+                ui.horizontal(|ui| { ui.add_space(8.0); ui.label(egui::RichText::new(track("Commission to")).font(mono(10.5)).color(col::HAZE)); });
+                ui.add_space(5.0);
                 ui.horizontal(|ui| {
-                    ui.add_space(6.0);
-                    ui.label(egui::RichText::new("faction").size(11.0).color(hex("#6f8090")));
-                    if let Some(f) = &fac { ui.label(egui::RichText::new(&f.name).color(hex(&f.palette.accent))); }
-                });
-                ui.horizontal(|ui| {
-                    ui.add_space(6.0);
-                    ui.label(egui::RichText::new("codename").size(11.0).color(hex("#6f8090")));
-                    ui.monospace(&skin.codename);
-                });
-                ui.add_space(14.0);
-                ui.separator();
-                ui.add_space(6.0);
-                ui.horizontal(|ui| { ui.add_space(6.0); ui.label(egui::RichText::new("APPLY AS WALLPAPER").size(11.0).strong().color(hex("#8aa0b4"))); });
-                ui.add_space(4.0);
-                ui.horizontal(|ui| {
-                    ui.add_space(6.0);
-                    let b = egui::Button::new(egui::RichText::new("▣ All monitors").size(14.0).strong()).min_size(Vec2::new(ui.available_width() - 6.0, 34.0));
-                    if ui.add_enabled(!busy, b).clicked() { applier.apply(&root, &skin.codename, None); *status = format!("applying {}…", skin.codename); }
+                    ui.add_space(8.0);
+                    let b = egui::Button::new(egui::RichText::new("▣ ALL SCREENS").font(oswald(16.0)).color(col::INK))
+                        .fill(accent)
+                        .min_size(Vec2::new(ui.available_width() - 8.0, 36.0));
+                    if ui.add_enabled(!busy, b).clicked() { applier.apply(&root, &skin.codename, None); *status = format!("commissioning {}…", skin.codename); }
                 });
                 for m in monitors.iter() {
-                    ui.add_space(4.0);
+                    ui.add_space(5.0);
                     ui.horizontal(|ui| {
-                        ui.add_space(6.0);
+                        ui.add_space(8.0);
                         let on = per_output.get(&m.name).map(|c| c == &skin.codename).unwrap_or(false);
-                        let label = format!("{} → {} ({}×{})", if on { "✓" } else { " " }, m.name, m.w, m.h);
-                        let b = egui::Button::new(egui::RichText::new(label).size(13.0)).min_size(Vec2::new(ui.available_width() - 6.0, 28.0));
-                        if ui.add_enabled(!busy, b).clicked() { applier.apply(&root, &skin.codename, Some(&m.name)); *status = format!("applying {} → {}…", skin.codename, m.name); }
+                        let label = format!("{}  {} · {}×{}", if on { "✓" } else { "→" }, m.name, m.w, m.h);
+                        let mut b = egui::Button::new(egui::RichText::new(label).font(mono(12.0)).color(if on { accent } else { col::CHALK }))
+                            .min_size(Vec2::new(ui.available_width() - 8.0, 28.0));
+                        if on { b = b.stroke(Stroke::new(1.0, accent)); }
+                        if ui.add_enabled(!busy, b).clicked() { applier.apply(&root, &skin.codename, Some(&m.name)); *status = format!("commissioning {} → {}…", skin.codename, m.name); }
                     });
                 }
-                ui.add_space(8.0);
+                ui.add_space(10.0);
                 ui.horizontal(|ui| {
-                    ui.add_space(6.0);
-                    ui.label(egui::RichText::new("First use of a skin renders once per resolution & fit, then it's cached. Change the fit above, then re-apply to update a live monitor.").size(11.0).color(hex("#6f8090")));
+                    ui.add_space(8.0);
+                    ui.label(egui::RichText::new("First use renders once per screen, resolution & fit, then it's cached. Change the fit above, then re-commission to update a live screen.").font(plex(11.0)).color(col::HAZE_DIM));
                 });
                 if monitors.len() > 1 {
-                    ui.add_space(4.0);
+                    ui.add_space(6.0);
                     ui.horizontal(|ui| {
-                        ui.add_space(6.0);
-                        ui.label(egui::RichText::new("Multi-monitor note: a wallpaper occasionally showing on the wrong screen is a known Wayland compositor quirk, not a bad assignment. Use \u{27f3} Fix monitors (bottom bar) to re-apply and clear it.").size(11.0).color(hex("#6f8090")));
+                        ui.add_space(8.0);
+                        ui.label(egui::RichText::new("Multi-screen note: a wallpaper occasionally showing on the wrong screen is a known Wayland compositor quirk, not a bad assignment. Use ⟳ Fix screens (bottom bar) to re-apply and clear it.").font(plex(11.0)).color(col::HAZE_DIM));
                     });
                 }
-                ui.add_space(6.0);
-                ui.horizontal(|ui| { ui.add_space(6.0); if ui.button("Close").clicked() { *selected = None; } });
                 ui.add_space(8.0);
+                ui.horizontal(|ui| { ui.add_space(8.0); if ui.button("CLOSE DOSSIER").clicked() { *selected = None; } });
+                ui.add_space(10.0);
               });
             });
         }
@@ -654,6 +746,16 @@ impl eframe::App for AppState {
                 ui.add_space(8.0);
                 match &*screen {
                     Screen::Factions => {
+                        ui.horizontal(|ui| {
+                            ui.add_space(2.0);
+                            ui.label(egui::RichText::new(track("Select fleet")).font(mono(11.5)).color(col::HAZE));
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                ui.add_space(2.0);
+                                let n = data.factions.iter().filter(|f| data.count(&f.key) > 0).count();
+                                ui.label(egui::RichText::new(track(&format!("{n} fleets"))).font(mono(11.0)).color(col::HAZE_DIM));
+                            });
+                        });
+                        ui.add_space(8.0);
                         ui.horizontal_wrapped(|ui| {
                             for f in data.factions.iter() {
                                 let n = data.count(&f.key);
@@ -667,25 +769,25 @@ impl eframe::App for AppState {
                     Screen::Gallery(key) => {
                         let accent = data.faction(key).map(|f| hex(&f.palette.accent)).unwrap_or(Color32::GRAY);
                         let fkey = key.clone();
-                        // ---- filter / sort bar ----
+                        // ---- manifest toolbar ----
                         ui.horizontal(|ui| {
                             ui.add_space(2.0);
-                            ui.toggle_value(fav_only, "★ Favorites");
-                            ui.toggle_value(oath_only, "⚭ Oath");
+                            ui.toggle_value(fav_only, "★ FAVORITES");
+                            ui.toggle_value(oath_only, "⚭ OATH");
                             ui.separator();
-                            ui.label(egui::RichText::new("sort").size(12.0).color(hex("#8aa0b4")));
-                            egui::ComboBox::from_id_source("sort").selected_text(sort.label()).width(96.0).show_ui(ui, |ui| {
+                            ui.label(egui::RichText::new(track("sort")).font(mono(11.0)).color(col::HAZE));
+                            egui::ComboBox::from_id_source("sort").selected_text(sort.label()).width(104.0).show_ui(ui, |ui| {
                                 ui.selectable_value(sort, Sort::Ship, Sort::Ship.label());
                                 ui.selectable_value(sort, Sort::SkinName, Sort::SkinName.label());
                             });
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                 ui.add_space(2.0);
-                                ui.label(egui::RichText::new(format!("{} shown", visible.len())).size(12.0).color(hex("#6f8090")));
+                                ui.label(egui::RichText::new(track(&format!("{} shown", visible.len()))).font(mono(11.0)).color(col::HAZE_DIM));
                             });
                         });
                         ui.add_space(6.0);
-                        // column count for keyboard up/down (card 172 + 10 spacing)
-                        *grid_cols = (((ui.available_width() + 10.0) / 182.0).floor() as usize).max(1);
+                        // column count for keyboard up/down (card 176 + 10 spacing)
+                        *grid_cols = (((ui.available_width() + 10.0) / 186.0).floor() as usize).max(1);
                         ui.horizontal_wrapped(|ui| {
                             for (pos, &i) in visible.iter().enumerate() {
                                 let s = &data.skins[i];
@@ -712,7 +814,7 @@ impl eframe::App for AppState {
         if *show_rotation {
             let mut open = true;
             let mut changed = false;
-            egui::Window::new("⟳  Auto-rotate")
+            egui::Window::new("⟳  ROTATION")
                 .open(&mut open)
                 .resizable(false)
                 .collapsible(false)
@@ -768,7 +870,7 @@ impl eframe::App for AppState {
             let mut open = true;
             let mut changed = false;
             const FPS_CAPS: &[(u32, &str)] = &[(0, "Uncapped"), (15, "15 fps"), (24, "24 fps"), (30, "30 fps")];
-            egui::Window::new("⏻  Power")
+            egui::Window::new("⚡  POWER")
                 .open(&mut open)
                 .resizable(false)
                 .collapsible(false)
@@ -825,29 +927,38 @@ impl eframe::App for AppState {
                 });
                 egui::Window::new("applying").title_bar(false).resizable(false).collapsible(false)
                     .anchor(Align2::CENTER_CENTER, Vec2::ZERO).show(ctx, |ui| {
-                        ui.set_width(360.0);
-                        ui.add_space(6.0);
-                        ui.vertical_centered(|ui| {
-                            ui.label(egui::RichText::new("Hang on — rendering your shipfu").size(17.0).strong());
-                            ui.add_space(2.0);
-                            ui.label(egui::RichText::new("to your screen resolution").size(13.0).color(hex("#9fb0c0")));
-                        });
+                        ui.set_width(320.0);
                         ui.add_space(10.0);
+                        ui.vertical_centered(|ui| {
+                            ui.label(egui::RichText::new("COMMISSIONING").font(oswald_b(21.0)).color(col::CHALK));
+                            ui.label(egui::RichText::new(track("rendering to your screen")).font(mono(10.0)).color(col::HAZE));
+                        });
+                        ui.add_space(14.0);
                         let frac = overall_fraction(p);
                         let (line, sub) = match &p.phase {
                             Phase::Rendering { done, total } => (
-                                format!("Rendering for {} ({}×{})", p.name, p.w, p.h),
-                                format!("frame {done}/{total} · monitor {}/{}", p.idx.max(1), p.total.max(1)),
+                                format!("{} · {}×{}", p.name, p.w, p.h),
+                                format!("frame {done}/{total}  ·  screen {}/{}", p.idx.max(1), p.total.max(1)),
                             ),
-                            Phase::Cached => (format!("Loading {} ({}×{})", p.name, p.w, p.h), "cached — applying instantly".into()),
-                            Phase::Applying => ("Applying…".to_string(), format!("monitor {}/{}", p.idx.max(1), p.total.max(1))),
+                            Phase::Cached => (format!("{} · {}×{}", p.name, p.w, p.h), "cached — applying instantly".into()),
+                            Phase::Applying => ("Applying…".to_string(), format!("screen {}/{}", p.idx.max(1), p.total.max(1))),
                         };
-                        ui.label(line);
-                        ui.add(egui::ProgressBar::new(frac).show_percentage().animate(true));
-                        ui.label(egui::RichText::new(sub).size(11.0).color(hex("#6f8090")));
+                        // radar scope with the percentage at its centre
+                        ui.vertical_centered(|ui| {
+                            let (r, _) = ui.allocate_exact_size(Vec2::splat(158.0), Sense::hover());
+                            radar(ui.painter(), r.center(), 68.0, frac, head_accent, now);
+                            ui.painter().text(r.center(), Align2::CENTER_CENTER, format!("{:.0}%", frac * 100.0), oswald_b(30.0), col::CHALK);
+                        });
+                        ui.add_space(14.0);
+                        ui.vertical_centered(|ui| {
+                            ui.label(egui::RichText::new(line).font(oswald(15.0)).color(col::CHALK));
+                            ui.label(egui::RichText::new(track(&sub)).font(mono(10.0)).color(col::HAZE));
+                        });
+                        ui.add_space(8.0);
+                        ui.vertical_centered(|ui| {
+                            ui.label(egui::RichText::new("Rendered once per skin, resolution & fit, then cached.").font(plex(11.0)).color(col::HAZE_DIM));
+                        });
                         ui.add_space(6.0);
-                        ui.label(egui::RichText::new("Done once per skin, resolution & fit, then it's cached.").size(11.0).italics().color(hex("#6f8090")));
-                        ui.add_space(4.0);
                     });
             }
         }
@@ -939,6 +1050,102 @@ fn gradient_rect(painter: &egui::Painter, rect: Rect, top: Color32, bot: Color32
     painter.add(mesh);
 }
 
+fn alpha(c: Color32, a: u8) -> Color32 {
+    Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), a)
+}
+
+/// Thin-spaced uppercase for eyebrow labels — a technical-readout tracking.
+fn track(s: &str) -> String {
+    s.to_uppercase()
+        .chars()
+        .map(|c| c.to_string())
+        .collect::<Vec<_>>()
+        .join("\u{2009}")
+}
+
+/// Four rivet dots inset into the corners of a plate.
+fn rivets(p: &egui::Painter, rect: Rect, c: Color32) {
+    let d = 4.5;
+    for pos in [
+        rect.left_top() + Vec2::splat(d),
+        rect.right_top() + Vec2::new(-d, d),
+        rect.left_bottom() + Vec2::new(d, -d),
+        rect.right_bottom() + Vec2::splat(-d),
+    ] {
+        p.circle_filled(pos, 1.15, c);
+    }
+}
+
+/// Paint a stencilled pennant plate (a navy's real hull prefix — USS/HMS/IJN),
+/// left edge at `left`, centred on `cy`. Returns the width painted.
+fn paint_pennant(p: &egui::Painter, left: f32, cy: f32, code: &str, accent: Color32, size: f32) -> f32 {
+    let galley = p.layout_no_wrap(code.to_uppercase(), stencil(size), accent);
+    let (padx, pady) = (size * 0.5, size * 0.26);
+    let w = galley.size().x + padx * 2.0;
+    let h = galley.size().y + pady * 2.0;
+    let rect = Rect::from_min_size(Pos2::new(left, cy - h / 2.0), Vec2::new(w, h));
+    p.rect_filled(rect, Rounding::same(2.0), col::INK);
+    p.rect_stroke(rect, Rounding::same(2.0), Stroke::new(1.0, alpha(accent, 200)));
+    p.circle_filled(rect.left_top() + Vec2::splat(3.0), 1.0, scale(accent, 0.55));
+    p.circle_filled(rect.right_bottom() + Vec2::splat(-3.0), 1.0, scale(accent, 0.55));
+    p.galley(rect.min + Vec2::new(padx, pady), galley, accent);
+    w
+}
+
+/// Allocate + paint a pennant plate inline in a ui layout.
+fn pennant_chip(ui: &mut egui::Ui, code: &str, accent: Color32, size: f32) {
+    let g = ui.painter().layout_no_wrap(code.to_uppercase(), stencil(size), accent);
+    let want = Vec2::new(g.size().x + size, g.size().y + size * 0.52);
+    let (r, _) = ui.allocate_exact_size(want, Sense::hover());
+    paint_pennant(ui.painter(), r.min.x, r.center().y, code, accent, size);
+}
+
+/// A small filled tag (e.g. "ON STATION") with ink text.
+fn paint_tag(p: &egui::Painter, min: Pos2, text: &str, fill: Color32, size: f32) -> Rect {
+    let galley = p.layout_no_wrap(text.to_uppercase(), mono(size), col::INK);
+    let (padx, pady) = (6.0, 3.0);
+    let rect = Rect::from_min_size(min, galley.size() + Vec2::new(padx * 2.0, pady * 2.0));
+    p.rect_filled(rect, Rounding::same(2.0), fill);
+    p.galley(rect.min + Vec2::new(padx, pady), galley, col::INK);
+    rect
+}
+
+/// Radar scope: range rings, a rotating fading sweep, and a progress arc.
+fn radar(p: &egui::Painter, center: Pos2, radius: f32, frac: f32, accent: Color32, t: f32) {
+    use std::f32::consts::{FRAC_PI_2, TAU};
+    p.circle_filled(center, radius, col::INK);
+    for k in 1..=3 {
+        p.circle_stroke(center, radius * k as f32 / 3.0, Stroke::new(1.0, col::RIVET));
+    }
+    p.line_segment([center - Vec2::new(radius, 0.0), center + Vec2::new(radius, 0.0)], Stroke::new(1.0, col::RIVET));
+    p.line_segment([center - Vec2::new(0.0, radius), center + Vec2::new(0.0, radius)], Stroke::new(1.0, col::RIVET));
+
+    // sweep: a fading fan trailing the leading edge
+    let lead = t * 2.4;
+    let span = 1.0;
+    let steps = 26;
+    let mut mesh = egui::epaint::Mesh::default();
+    mesh.colored_vertex(center, alpha(accent, 55));
+    for i in 0..=steps {
+        let f = i as f32 / steps as f32;
+        let ang = lead - span * f;
+        let a = (55.0 * (1.0 - f)) as u8;
+        mesh.colored_vertex(center + Vec2::angled(ang) * radius, alpha(accent, a));
+    }
+    for i in 0..steps {
+        mesh.add_triangle(0, i as u32 + 1, i as u32 + 2);
+    }
+    p.add(mesh);
+    p.line_segment([center, center + Vec2::angled(lead) * radius], Stroke::new(1.5, accent));
+
+    // progress arc, from 12 o'clock clockwise
+    let n = 64;
+    let pts: Vec<Pos2> = (0..=n)
+        .map(|i| center + Vec2::angled(-FRAC_PI_2 + (i as f32 / n as f32) * frac * TAU) * radius)
+        .collect();
+    p.add(Shape::line(pts, Stroke::new(2.5, accent)));
+}
+
 /// Paint a monitor-shaped preview of how a skin's thumbnail would sit on screen under `fit`.
 #[allow(clippy::too_many_arguments)]
 fn monitor_preview(
@@ -947,7 +1154,7 @@ fn monitor_preview(
 ) {
     let ta = content_aspect.max(0.01); // native aspect of the painting being previewed
     let mr = fit_rect(area, aspect);
-    painter.rect_filled(mr.expand(3.0), Rounding::same(6.0), hex("#0b0d11"));
+    painter.rect_filled(mr.expand(4.0), Rounding::same(3.0), col::INK);
     gradient_rect(painter, mr, hex("#1a1630"), hex("#2c1c3e"));
     let full = Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0));
     if let Some(tex) = thumb {
@@ -972,9 +1179,18 @@ fn monitor_preview(
             let er = Rect::from_center_size(mr.center(), Vec2::splat(s));
             painter.image(em.id(), er, full, Color32::from_rgba_unmultiplied(tint.r(), tint.g(), tint.b(), 150));
         }
-        painter.text(mr.center_bottom() - Vec2::new(0.0, 16.0), Align2::CENTER_CENTER, "no L2D preview", FontId::proportional(11.0), hex("#7a8a99"));
+        painter.text(mr.center_bottom() - Vec2::new(0.0, 16.0), Align2::CENTER_CENTER, track("no L2D on file"), mono(9.5), col::HAZE);
     }
-    painter.rect_stroke(mr, Rounding::same(2.0), Stroke::new(1.0, hex("#3a4452")));
+    painter.rect_stroke(mr, Rounding::same(1.0), Stroke::new(1.0, alpha(tint, 200)));
+    // scope corner ticks
+    let t = 8.0;
+    for (c, dx, dy) in [
+        (mr.left_top(), 1.0, 1.0), (mr.right_top(), -1.0, 1.0),
+        (mr.left_bottom(), 1.0, -1.0), (mr.right_bottom(), -1.0, -1.0),
+    ] {
+        painter.line_segment([c, c + Vec2::new(dx * t, 0.0)], Stroke::new(1.5, tint));
+        painter.line_segment([c, c + Vec2::new(0.0, dy * t)], Stroke::new(1.5, tint));
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -982,27 +1198,32 @@ fn faction_tile(
     ui: &mut egui::Ui, ctx: &Context, textures: &mut HashMap<String, TextureHandle>, root: &Path,
     key: &str, name: &str, short: &str, count: usize, pal: &crate::model::Palette,
 ) -> bool {
-    let size = Vec2::new(232.0, 132.0);
+    let size = Vec2::new(252.0, 150.0);
     let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
     if ui.is_rect_visible(rect) {
         let emblem = load_tex(textures, ctx, root, &format!("assets/emblems/{key}.png"));
         let p = ui.painter_at(rect);
-        let bg = hex(&pal.panel);
         let accent = hex(&pal.accent);
         let hovered = resp.hovered();
-        p.rect_filled(rect, Rounding::same(10.0), if hovered { scale(bg, 1.18) } else { bg });
+        let round = Rounding::same(4.0);
+        p.rect_filled(rect, round, if hovered { scale(col::STEEL_HI, 1.28) } else { col::STEEL_HI });
+        // faction ensign, tinted, anchored to the right edge
         if let Some(tex) = &emblem {
-            let em = 118.0;
-            let er = Rect::from_min_size(Pos2::new(rect.max.x - em + 14.0, rect.center().y - em / 2.0), Vec2::splat(em));
-            let a = if hovered { 255 } else { 180 };
-            p.image(tex.id(), er, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), a));
+            let em = 122.0;
+            let er = Rect::from_min_size(Pos2::new(rect.max.x - em + 10.0, rect.center().y - em / 2.0), Vec2::splat(em));
+            let a = if hovered { 66 } else { 42 };
+            p.image(tex.id(), er, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), alpha(accent, a));
         }
-        let bar = Rect::from_min_max(rect.min, Pos2::new(rect.min.x + 6.0, rect.max.y));
-        p.rect_filled(bar, Rounding::ZERO, accent);
-        p.text(Pos2::new(rect.min.x + 18.0, rect.min.y + 18.0), Align2::LEFT_TOP, short, FontId::proportional(14.0), hex(&pal.muted));
-        p.text(Pos2::new(rect.min.x + 18.0, rect.min.y + 44.0), Align2::LEFT_TOP, name, FontId::proportional(22.0), hex(&pal.text));
-        p.text(Pos2::new(rect.min.x + 18.0, rect.max.y - 30.0), Align2::LEFT_TOP, format!("{count} skins"), FontId::proportional(14.0), accent);
-        if hovered { p.rect_stroke(rect, Rounding::same(10.0), Stroke::new(1.5, accent)); }
+        // hull stripe
+        p.rect_filled(Rect::from_min_max(rect.min, Pos2::new(rect.min.x + 5.0, rect.max.y)), round, accent);
+        rivets(&p, rect.shrink(3.0), col::RIVET);
+        paint_pennant(&p, rect.min.x + 18.0, rect.min.y + 27.0, short, accent, 13.0);
+        p.text(Pos2::new(rect.min.x + 18.0, rect.min.y + 48.0), Align2::LEFT_TOP, name.to_uppercase(), oswald_b(21.0), col::CHALK);
+        let wy = rect.max.y - 32.0;
+        p.line_segment([Pos2::new(rect.min.x + 18.0, wy), Pos2::new(rect.max.x - 16.0, wy)], Stroke::new(1.0, col::RIVET));
+        let unit = if count == 1 { "ship" } else { "ships" };
+        p.text(Pos2::new(rect.min.x + 18.0, rect.max.y - 24.0), Align2::LEFT_TOP, track(&format!("{count} {unit}")), mono(11.0), col::HAZE);
+        p.rect_stroke(rect, round, Stroke::new(if hovered { 1.5 } else { 1.0 }, if hovered { accent } else { col::RIVET }));
     }
     resp.clicked()
 }
@@ -1012,39 +1233,61 @@ fn skin_card(
     ui: &mut egui::Ui, ctx: &Context, textures: &mut HashMap<String, TextureHandle>, root: &Path,
     thumb: &str, ship: &str, sub: &str, oath: bool, live: bool, fav: bool, fkey: &str, accent: Color32, cursor: bool,
 ) -> egui::Response {
-    let cw = 172.0;
+    let cw = 176.0;
     let img_h = cw / 0.75;
-    let ch = img_h + 50.0;
+    let plate_h = 58.0;
+    let ch = img_h + plate_h;
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(cw, ch), Sense::click());
     if ui.is_rect_visible(rect) {
+        let round = Rounding::same(4.0);
         let img_rect = Rect::from_min_size(rect.min, Vec2::new(cw, img_h));
         let tex = load_tex(textures, ctx, root, thumb);
         let emblem = if tex.is_none() { load_tex(textures, ctx, root, &format!("assets/emblems/{fkey}.png")) } else { None };
-        let painter = ui.painter_at(rect);
-        painter.rect_filled(rect, Rounding::same(8.0), hex("#13161b"));
+        let p = ui.painter_at(rect);
+        p.rect_filled(rect, round, col::STEEL_HI);
         if let Some(tex) = &tex {
-            painter.image(tex.id(), img_rect, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), Color32::WHITE);
+            p.image(tex.id(), img_rect, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), Color32::WHITE);
         } else {
-            // placeholder: faction emblem (tinted) + note
-            painter.rect_filled(img_rect, Rounding::same(8.0), hex("#171a20"));
+            p.rect_filled(img_rect, round, col::INK);
             if let Some(tex) = &emblem {
                 let er = Rect::from_center_size(img_rect.center() - Vec2::new(0.0, 12.0), Vec2::splat(96.0));
-                painter.image(tex.id(), er, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 150));
+                p.image(tex.id(), er, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), alpha(accent, 130));
             }
-            painter.text(img_rect.center_bottom() - Vec2::new(0.0, 16.0), Align2::CENTER_CENTER, "no preview", FontId::proportional(11.0), hex("#54606e"));
+            p.text(img_rect.center_bottom() - Vec2::new(0.0, 16.0), Align2::CENTER_CENTER, track("no L2D on file"), mono(9.5), col::HAZE_DIM);
         }
-        painter.text(Pos2::new(rect.min.x + 8.0, img_rect.max.y + 6.0), Align2::LEFT_TOP, trunc(ship, 18), FontId::proportional(14.5), hex("#eef2f6"));
-        painter.text(Pos2::new(rect.min.x + 8.0, img_rect.max.y + 26.0), Align2::LEFT_TOP, trunc(sub, 22), FontId::proportional(11.5), hex("#8a99a8"));
-        let mut rx = rect.max.x - 8.0;
-        if fav { painter.text(Pos2::new(rx, rect.min.y + 6.0), Align2::RIGHT_TOP, "★", FontId::proportional(15.0), hex("#e7c558")); rx -= 20.0; }
-        if oath { painter.text(Pos2::new(rx, rect.min.y + 6.0), Align2::RIGHT_TOP, "⚭", FontId::proportional(16.0), hex("#cdb24a")); }
+        // waterline: the boundary between artwork and nameplate
+        p.line_segment([Pos2::new(rect.min.x, img_rect.max.y), Pos2::new(rect.max.x, img_rect.max.y)], Stroke::new(2.0, accent));
+        // engraved nameplate
+        p.text(Pos2::new(rect.min.x + 9.0, img_rect.max.y + 8.0), Align2::LEFT_TOP, trunc(&ship.to_uppercase(), 17), oswald(15.5), col::CHALK);
+        p.text(Pos2::new(rect.min.x + 9.0, img_rect.max.y + 30.0), Align2::LEFT_TOP, trunc(sub, 26), plex_it(11.0), col::HAZE);
+
         if live {
-            let badge = Rect::from_min_size(Pos2::new(rect.min.x + 6.0, rect.min.y + 6.0), Vec2::new(46.0, 20.0));
-            painter.rect_filled(badge, Rounding::same(6.0), hex("#2e7d32"));
-            painter.text(badge.center(), Align2::CENTER_CENTER, "LIVE", FontId::proportional(11.0), Color32::WHITE);
+            paint_tag(&p, rect.min + Vec2::splat(7.0), "on station", col::SIGNAL, 9.5);
         }
-        if cursor { painter.rect_stroke(rect.expand(1.5), Rounding::same(9.0), Stroke::new(2.0, hex("#d6b24a"))); }
-        else if resp.hovered() { painter.rect_stroke(rect, Rounding::same(8.0), Stroke::new(1.5, hex("#d6b24a"))); }
+        // status glyphs on a small ink chip so they read over any artwork
+        if fav || oath {
+            let n = fav as i32 + oath as i32;
+            let chip = Rect::from_min_size(Pos2::new(rect.max.x - 7.0 - 20.0 * n as f32, rect.min.y + 7.0), Vec2::new(20.0 * n as f32, 20.0));
+            p.rect_filled(chip, Rounding::same(3.0), alpha(col::INK, 170));
+            let mut rx = rect.max.x - 12.0;
+            if fav { p.text(Pos2::new(rx, rect.min.y + 8.0), Align2::RIGHT_TOP, "★", FontId::proportional(14.0), col::GOLD); rx -= 20.0; }
+            if oath { p.text(Pos2::new(rx, rect.min.y + 8.0), Align2::RIGHT_TOP, "⚭", FontId::proportional(15.0), col::GOLD); }
+        }
+
+        if cursor {
+            p.rect_stroke(rect, round, Stroke::new(2.0, accent));
+            // corner ticks — a targeting reticle for the keyboard focus
+            let t = 9.0;
+            for (c, dx, dy) in [
+                (rect.left_top(), 1.0, 1.0), (rect.right_top(), -1.0, 1.0),
+                (rect.left_bottom(), 1.0, -1.0), (rect.right_bottom(), -1.0, -1.0),
+            ] {
+                p.line_segment([c, c + Vec2::new(dx * t, 0.0)], Stroke::new(2.0, col::CHALK));
+                p.line_segment([c, c + Vec2::new(0.0, dy * t)], Stroke::new(2.0, col::CHALK));
+            }
+        } else if resp.hovered() {
+            p.rect_stroke(rect, round, Stroke::new(1.0, accent));
+        }
     }
     resp
 }
