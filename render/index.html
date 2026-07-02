@@ -12,7 +12,6 @@
 const q = new URLSearchParams(location.search);
 const W = +(q.get('w')||1920), H = +(q.get('h')||1080);
 const FPS = +(q.get('fps')||30);
-const FILL = +(q.get('fill')||0.95);          // model height as fraction of canvas
 const OX = +(q.get('ox')||0.5), OY = +(q.get('oy')||0.5); // anchor position (0..1)
 const FIT = (q.get('fit')||'fit');            // fit | stretch | crop — how the model fills the screen
 const BGTOP = '#'+(q.get('bgtop')||'12121f');

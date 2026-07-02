@@ -1,5 +1,5 @@
 // Render an Azur Lane Live2D skin's idle loop to a seamless looping mp4.
-// Usage: node render.js <modelDir> [outMp4] [--w 1920 --h 1080 --fps 30 --fill 0.95 --ox 0.5 --oy 0.55 --fit fit|stretch|crop --seconds <override>]
+// Usage: node render.js <modelDir> [outMp4] [--w 1920 --h 1080 --fps 30 --ox 0.5 --oy 0.55 --fit fit|stretch|crop --seconds <override>]
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
@@ -15,7 +15,7 @@ if(!model3){ console.error('no .model3.json in', MODEL_DIR); process.exit(1); }
 const name = model3.replace('.model3.json','');
 const OUT = path.resolve(process.argv[3] && !process.argv[3].startsWith('--') ? process.argv[3] : path.join(__dirname,'out',name+'.mp4'));
 
-const W=+arg('w',1920), H=+arg('h',1080), FPS=+arg('fps',30), FILL=+arg('fill',0.95);
+const W=+arg('w',1920), H=+arg('h',1080), FPS=+arg('fps',30);
 const OX=+arg('ox',0.5), OY=+arg('oy',0.55), FIT=arg('fit','fit');
 const WALL = __dirname;
 
@@ -46,10 +46,13 @@ const server = http.createServer((req,res)=>{
 (async ()=>{
   await new Promise(r=>server.listen(0,r));
   const port = server.address().port;
-  const framesDir = path.join(WALL,'frames'); fs.rmSync(framesDir,{recursive:true,force:true}); fs.mkdirSync(framesDir,{recursive:true});
+  // Per-pid frames dir so concurrent renders (e.g. rotate-daemon + a manual apply) never
+  // clobber each other's PNGs — otherwise ffmpeg would encode a mixed frame set and the
+  // atomic rename below would install that corruption as a "valid" cache mp4.
+  const framesDir = path.join(WALL,'frames',String(process.pid)); fs.rmSync(framesDir,{recursive:true,force:true}); fs.mkdirSync(framesDir,{recursive:true});
   fs.mkdirSync(path.dirname(OUT),{recursive:true});
 
-  const url = `http://127.0.0.1:${port}/?w=${W}&h=${H}&fps=${FPS}&fill=${FILL}&ox=${OX}&oy=${OY}&fit=${encodeURIComponent(FIT)}&model=/model/${encodeURIComponent(model3)}`;
+  const url = `http://127.0.0.1:${port}/?w=${W}&h=${H}&fps=${FPS}&ox=${OX}&oy=${OY}&fit=${encodeURIComponent(FIT)}&model=/model/${encodeURIComponent(model3)}`;
   console.log(`[render] ${name}  ${W}x${H}@${FPS}  ${FIT}  ${seconds}s -> ${FRAMES} frames`);
 
   const browser = await puppeteer.launch({
@@ -88,6 +91,8 @@ const server = http.createServer((req,res)=>{
   } catch(e){
     fs.rmSync(TMP,{force:true});   // never leave a partial temp file behind
     throw e;
+  } finally {
+    fs.rmSync(framesDir,{recursive:true,force:true});   // drop this run's intermediate PNGs
   }
   console.log('[done]',OUT);
 })().catch(e=>{console.error(e);process.exit(1);});

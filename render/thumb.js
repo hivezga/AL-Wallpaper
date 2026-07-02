@@ -1,12 +1,11 @@
 // Batch thumbnail generator for extracted Live2D skins (frame-0 composed render).
-// Usage: node thumb.js --parent <Live2DOutput> --out <pngDir> [--w 640 --h 360 --fill 0.95] <name> [<name> ...]
+// Usage: node thumb.js --parent <Live2DOutput> --out <pngDir> [--w 640 --h 360] <name> [<name> ...]
 const http=require('http'), fs=require('fs'), path=require('path'), puppeteer=require('puppeteer');
 function arg(n,d){const i=process.argv.indexOf('--'+n);return i>=0?process.argv[i+1]:d;}
 const PARENT=path.resolve(arg('parent',''));
 const OUT=path.resolve(arg('out','thumbs'));
-const W=+arg('w',640),H=+arg('h',360),FILL=+arg('fill',0.95),OY=+arg('oy',0.55),WARMUP=+arg('frames',20);
-const names=process.argv.slice(2).filter(a=>!a.startsWith('--')&&process.argv[process.argv.indexOf(a)-1]?.startsWith('--')===false||(!a.startsWith('--')&&!['--parent','--out','--w','--h','--fill','--oy'].includes(process.argv[process.argv.indexOf(a)-1])));
-// simpler/robust name collection:
+const W=+arg('w',640),H=+arg('h',360),OY=+arg('oy',0.55),WARMUP=+arg('frames',20);
+// positional args (skin names) are everything that isn't a --flag or its value
 const NAMES=[]; for(let i=2;i<process.argv.length;i++){const a=process.argv[i]; if(a.startsWith('--')){i++;continue;} NAMES.push(a);}
 const WALL=__dirname;
 const MIME={'.js':'text/javascript','.html':'text/html','.json':'application/json','.png':'image/png'};
@@ -25,7 +24,7 @@ const server=http.createServer((req,res)=>{const u=decodeURIComponent(req.url.sp
   for(const name of NAMES){
     const m3=fs.existsSync(path.join(PARENT,name))?fs.readdirSync(path.join(PARENT,name)).find(f=>f.endsWith('.model3.json')):null;
     if(!m3){console.log('skip(no model):',name);fail++;continue;}
-    const url=`http://127.0.0.1:${port}/?w=${W}&h=${H}&fill=${FILL}&oy=${OY}&model=/m/${encodeURIComponent(name)}/${encodeURIComponent(m3)}`;
+    const url=`http://127.0.0.1:${port}/?w=${W}&h=${H}&oy=${OY}&model=/m/${encodeURIComponent(name)}/${encodeURIComponent(m3)}`;
     try{
       await page.goto(url,{waitUntil:'load',timeout:45000});
       await page.waitForFunction('window.__ready===true||window.__err!==null',{timeout:45000});
