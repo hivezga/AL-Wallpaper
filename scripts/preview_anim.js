@@ -10,7 +10,7 @@
 const http = require('http'), fs = require('fs'), path = require('path'), os = require('os');
 const { execFileSync } = require('child_process');
 const ROOT = path.dirname(__dirname);                         // …/al-wallpaper
-const WALL = path.join(os.homedir(), 'azurlane', 'wallpaper'); // index.html + vendor + puppeteer
+const WALL = path.join(ROOT, 'render');                       // index.html + vendor + puppeteer
 const MODELS = path.join(os.homedir(), 'azurlane', 'extract', 'out_all', 'Live2DOutput');
 const OUT = path.join(ROOT, 'assets', 'preview_anim');
 const MAX = 360;       // longest side of the GIF (small — it's a preview)

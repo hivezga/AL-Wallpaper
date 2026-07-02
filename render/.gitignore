@@ -1,0 +1,13 @@
+# dependencies
+node_modules/
+
+# generated render artifacts
+# out/    = encoded wallpaper mp4s (rendered on demand, incl. out/_bak)
+# frames/ = intermediate PNG frames from render.js
+# thumbs/ = generated thumbnails
+out/
+frames/
+thumbs/
+
+# logs
+*.log

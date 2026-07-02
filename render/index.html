@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>html,body{margin:0;padding:0;overflow:hidden;background:#000}canvas{display:block}</style>
+<script src="/vendor/live2dcubismcore.min.js"></script>
+<script src="/vendor/pixi.min.js"></script>
+<script src="/vendor/cubism4.min.js"></script>
+</head>
+<body>
+<script>
+const q = new URLSearchParams(location.search);
+const W = +(q.get('w')||1920), H = +(q.get('h')||1080);
+const FPS = +(q.get('fps')||30);
+const FILL = +(q.get('fill')||0.95);          // model height as fraction of canvas
+const OX = +(q.get('ox')||0.5), OY = +(q.get('oy')||0.5); // anchor position (0..1)
+const FIT = (q.get('fit')||'fit');            // fit | stretch | crop — how the model fills the screen
+const BGTOP = '#'+(q.get('bgtop')||'12121f');
+const BGBOT = '#'+(q.get('bgbot')||'2a1a3a');
+const MODEL = q.get('model');                  // e.g. /model/dafeng_2.model3.json
+
+window.__ready = false;
+window.__err = null;
+
+function gradientTexture(w,h,top,bot){
+  const c=document.createElement('canvas'); c.width=2; c.height=h;
+  const g=c.getContext('2d'); const grd=g.createLinearGradient(0,0,0,h);
+  grd.addColorStop(0,top); grd.addColorStop(1,bot);
+  g.fillStyle=grd; g.fillRect(0,0,2,h);
+  return PIXI.Texture.from(c);
+}
+
+(async () => {
+  try {
+    const app = new PIXI.Application({
+      width: W, height: H, autoStart: false, antialias: true,
+      backgroundColor: 0x000000, backgroundAlpha: 1,
+      powerPreference: 'high-performance'
+    });
+    document.body.appendChild(app.view);
+
+    // background gradient sprite
+    const bg = new PIXI.Sprite(gradientTexture(W,H,BGTOP,BGBOT));
+    bg.width = W; bg.height = H;
+    app.stage.addChild(bg);
+
+    const model = await PIXI.live2d.Live2DModel.from(MODEL, { autoUpdate:false, autoInteract:false });
+    app.stage.addChild(model);
+
+    model.anchor.set(0.5, 0.5);
+
+    // Measure the model's *actual drawn bounds*. The Cubism canvas (model.width/height)
+    // is usually larger than the visible art, so scaling by it would mis-frame the model
+    // (leftover gutters on crop, wrong centering on fit). getBounds() after a render gives
+    // the true on-screen extent of the art at scale 1.
+    model.position.set(0, 0);
+    model.scale.set(1);
+    model.motion('idle', 0, 3);
+    model.update(0);
+    app.renderer.render(app.stage);
+    const b = model.getBounds(true);
+    const aw = Math.max(1, b.width), ah = Math.max(1, b.height);
+    const acx = b.x + b.width / 2, acy = b.y + b.height / 2; // art center @ scale 1, pos 0
+
+    // scale to the screen per the chosen mode (matches the in-app preview):
+    //   fit     — contain: whole painting visible, gradient fills the bars
+    //   crop    — cover: fills the screen, overflow cropped
+    //   stretch — fill both axes non-uniformly (distorts)
+    let sx, sy;
+    if (FIT === 'stretch') { sx = W / aw; sy = H / ah; }
+    else if (FIT === 'crop') { sx = sy = Math.max(W / aw, H / ah); }
+    else { sx = sy = Math.min(W / aw, H / ah); } // fit = contain
+    model.scale.set(sx, sy);
+    model.position.set(W * OX - acx * sx, H * OY - acy * sy);
+
+    // start idle loop explicitly (FORCE priority = 3)
+    model.motion('idle', 0, 3);
+    model.update(0);
+    app.renderer.render(app.stage);
+
+    window.__app = app;
+    window.__model = model;
+    // advance exactly one frame and render
+    window.__frame = () => { model.update(1000 / FPS); app.renderer.render(app.stage); };
+    window.__ready = true;
+  } catch (e) {
+    window.__err = (e && e.message) ? e.message : String(e);
+  }
+})();
+</script>
+</body>
+</html>

@@ -7,7 +7,7 @@
 //   node preview.js --force <codename ...>        re-render even if the file exists
 const http = require('http'), fs = require('fs'), path = require('path'), os = require('os');
 const ROOT = path.dirname(__dirname);                       // …/al-wallpaper
-const WALL = path.join(os.homedir(), 'azurlane', 'wallpaper'); // index.html + vendor + puppeteer
+const WALL = path.join(ROOT, 'render');                     // index.html + vendor + puppeteer
 const MODELS = path.join(os.homedir(), 'azurlane', 'extract', 'out_all', 'Live2DOutput');
 const OUT = path.join(ROOT, 'assets', 'preview');
 const MAX = 512; // longest side of the preview image

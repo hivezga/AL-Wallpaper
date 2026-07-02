@@ -14,7 +14,7 @@ full Azur Lane Hyprland rice.
 - **Whole-UI reskin per faction** (palette, accent, emblem watermark, header banner).
 - Click a skin → preview (thumbnail / looping mp4) → **Apply** (sets live wallpaper) + **Set default**.
 - Works independently of the desktop environment; first-class on **COSMIC** and **Hyprland** (both `wlr-layer-shell`).
-- Reuse the proven pipeline already built in `~/azurlane/wallpaper/` (render.js → mp4 → mpvpaper).
+- Reuse the proven pipeline already built in `render/` (render.js → mp4 → mpvpaper).
 
 **Non-goals (explicit traps avoided)**
 - No in-app Live2D/Cubism engine (binding Cubism Native SDK = multi-week rabbit hole). Preview = thumbnail, optionally the mp4 via a video frame; the *real* live preview is applying it.
@@ -195,7 +195,7 @@ struct App {
 `scripts/apply.sh` = generalized `wallpaper.sh`:
 - Monitor detect: try `wlr-randr --json` → `cosmic-randr list` → `hyprctl -j monitors`; produce `(name WxH)` list.
 - For each output: render `out/<skin>_<W>x<H>.mp4` if absent (reuse `render.js`), then `mpvpaper <name> <mp4>`.
-- Write chosen skin to `~/.config/al-wallpaper/default` + keep `~/azurlane/wallpaper/default.txt` in sync for the existing autostart.
+- Write chosen skin to `~/.config/al-wallpaper/default` + keep `render/default.txt` in sync for the existing autostart.
 - App calls `apply.sh <skin>`; parses stdout lines for progress events.
 
 Autostart (existing `al-live2d-wallpaper.desktop`) keeps working; update its wrapper to read the XDG config default.

@@ -54,14 +54,20 @@ committed catalog (`data/catalog.json`, `factions.json`, `favorites.json`). To r
 - **`assets/thumbs/`, `assets/preview/`, `assets/preview_anim/`** — generated; batch with
   `node scripts/thumb.js`, `node scripts/preview.js --all`, `node scripts/preview_anim.js --all`
   (or let the GUI make `preview*` lazily on first view). These need the extracted Live2D models in
-  `~/azurlane/extract/out_all/Live2DOutput` and the render pipeline in `~/azurlane/wallpaper/`.
+  `~/azurlane/extract/out_all/Live2DOutput` and the render pipeline in [`render/`](render/).
 - **`assets/emblems/`** is committed (sourced/curated, not script-generated).
 
-> **Note — the render pipeline lives outside this repo.** `apply.sh`/`prerender.sh` shell out to
-> `~/azurlane/wallpaper/render.js`, which is **not** version-controlled here. It carries a local patch
-> worth reapplying if you rebuild that dir: it must encode to a **temp file and atomically rename on
-> success** (not write directly to the cache path). Otherwise an interrupted render (kill/crash) leaves
-> a truncated `.mp4` at the cache path that `apply.sh` silently reuses forever.
+### The render pipeline (`render/`)
+
+`apply.sh`/`prerender.sh`/`preview*.js` drive the headless Live2D → mp4 engine in
+[`render/`](render/): `render.js` (Puppeteer + the Cubism runtime in `render/vendor/` → a seamless
+looping mp4 per output), `index.html`, `thumb.js`, and standalone apply/autostart scripts. It runs from
+`~/azurlane/al-wallpaper/render/`; its generated output (`render/out/` mp4 cache, `render/frames/`,
+`render/thumbs/`, `render/node_modules/`) is gitignored via `render/.gitignore`. It needs the extracted
+models in `~/azurlane/extract/out_all/Live2DOutput` and `npm install` inside `render/`.
+
+`render.js` encodes to a temp file and atomically renames on success, so an interrupted render (kill /
+crash) never leaves a truncated `.mp4` at the cache path that `apply.sh` would silently reuse forever.
 
 ## Dependencies
 

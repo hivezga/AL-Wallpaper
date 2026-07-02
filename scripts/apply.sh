@@ -14,7 +14,7 @@
 #   PROGRESS <done> <total> | APPLIED <name> <skin> | DONE <skin> <n> | ERR <msg>
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-RENDER_DIR="$HOME/azurlane/wallpaper"
+RENDER_DIR="$HOME/azurlane/al-wallpaper/render"
 MODELS="$HOME/azurlane/extract/out_all/Live2DOutput"
 OUTDIR="$RENDER_DIR/out"
 export DOTNET_ROOT="$HOME/.dotnet"

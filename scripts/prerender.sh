@@ -3,7 +3,7 @@
 #   prerender.sh <codename...>     OR     prerender.sh --favorites
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"; ROOT="$(dirname "$HERE")"
-RENDER_DIR="$HOME/azurlane/wallpaper"
+RENDER_DIR="$HOME/azurlane/al-wallpaper/render"
 MODELS="$HOME/azurlane/extract/out_all/Live2DOutput"
 OUTDIR="$RENDER_DIR/out"
 export DOTNET_ROOT="$HOME/.dotnet"; mkdir -p "$OUTDIR"
