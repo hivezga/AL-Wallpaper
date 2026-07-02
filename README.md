@@ -14,7 +14,10 @@ cargo run
 # release
 cargo build --release && ./target/release/al-wallpaper
 ```
-Also installed as an app-menu entry: **Azur Lane Wallpaper** (`~/.local/share/applications/al-wallpaper.desktop`).
+Also installed as an app-menu entry: **Azur Lane Wallpaper** (`~/.local/share/applications/al-wallpaper.desktop`, `Icon=al-wallpaper`). The window/taskbar icon is bundled from `assets/icon.png` (a gunmetal "AL" pennant plate); install it into the icon theme with:
+```
+for s in 32 48 64 128 256 512; do d=~/.local/share/icons/hicolor/${s}x${s}/apps; mkdir -p $d; magick assets/icon.png -resize $s $d/al-wallpaper.png; done
+```
 
 ## Use
 
